@@ -1,0 +1,75 @@
+library(Seurat)
+
+# create object for Infected population count matrix
+pos.data <- Read10X(data.dir = "pos_tsv")
+pos.object <- CreateSeuratObject(counts = pos.data, project = "Pos")
+pos.object
+
+# create object for Bystander population count matrix
+neg.data <- Read10X(data.dir = "neg_tsv")
+neg.object <- CreateSeuratObject(counts = neg.data, project = "Neg")
+neg.object
+
+# create object for Control population count matrix
+uni.data <- Read10X(data.dir = "uni_tsv")
+uni.object <- CreateSeuratObject(counts = uni.data, project = "Ctrl")
+uni.object
+
+# merge objects for aggregate analysis
+aggr.object <- merge(uni.object, y = c(pos.object, neg.object), add.cell.ids = c("Ctrl", "Pos", "Neg"), project = "aggr")
+aggr.object
+
+# calculate percentage of total transcripts from mt-genes
+aggr.object[["percent.mt"]] <- PercentageFeatureSet(aggr.object, pattern = "^MT-")
+
+# calculate percentage of total transcripts from rp-genes
+aggr.object[["percent.rp"]] <- PercentageFeatureSet(aggr.object, pattern = "^RP")
+
+# visualize aggr.object QC metrics as a violin plot
+VlnPlot(aggr.object, features = c("nFeature_RNA", "nCount_RNA", "percent.mt", "percent.rp"), ncol = 4, pt.size = 0.5)
+
+# Filter out low quality reads **no normalization** - nGene filter sets min for unique features and UMI counts
+aggr.deseq <- subset(x = aggr.object, 
+                   subset = (nFeature_RNA >= 200) &
+                     (nFeature_RNA <= 8000) & 
+                     (nCount_RNA >= 1000) &
+                     (percent.mt < 30))
+
+# check population cell numbers
+table(aggr.deseq$orig.ident)
+
+# visualize aggr.filt QC metrics as a violin plot
+VlnPlot(aggr.deseq, features = c("nFeature_RNA", "nCount_RNA", "percent.mt", "percent.rp"), ncol = 4, pt.size = 0.5)
+
+# Extract counts
+counts.aggr.deseq <- GetAssayData(object = aggr.deseq, slot = "counts")
+
+# Output a logical vector for every gene on whether the more than zero counts per cell
+nonzero.aggr.deseq <- counts.aggr.deseq > 0
+
+# Sums all TRUE values and returns TRUE if more than 1 TRUE values per gene
+keep_genes.aggr.deseq <- Matrix::rowSums(nonzero.aggr.deseq) >= 1
+
+# Only keeping those genes expressed in more than 1 cell
+filtered_counts.aggr.deseq <- counts.aggr.deseq[keep_genes.aggr.deseq, ]
+
+# Reassign to filtered Seurat object
+aggr.deseq <- CreateSeuratObject(filtered_counts.aggr.deseq, meta.data = aggr.deseq@meta.data)
+
+# run dge analysis for aggr.filt between populations for Pos
+aggr.deseq.pos <- FindMarkers(object = aggr.deseq, ident.1 = "Pos", ident.2 = NULL, assay = "RNA", test.use = "DESeq2")
+
+# create csv file and export
+write.csv(aggr.deseq.pos, file = "aggr.deseq.pos.csv")
+
+# run dge analysis for aggr.filt between populations for Neg
+aggr.deseq.neg <- FindMarkers(object = aggr.deseq, ident.1 = "Neg", ident.2 = NULL, assay = "RNA", test.use = "DESeq2")
+
+# create csv file and export
+write.csv(aggr.deseq.neg, file = "aggr.deseq.neg.csv")
+
+# run dge analysis for aggr.filt between populations for Ctrl
+aggr.deseq.ctrl <- FindMarkers(object = aggr.deseq, ident.1 = "Ctrl", ident.2 = NULL, assay = "RNA", test.use = "DESeq2")
+
+# create csv file and export
+write.csv(aggr.deseq.ctrl, file = "aggr.deseq.ctrl.csv")
